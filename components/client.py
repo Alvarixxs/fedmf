@@ -115,7 +115,6 @@ class Client:
         uploads: Dict[int, Tuple[torch.Tensor, torch.Tensor, float]] = {}
         with torch.no_grad():
             for t, item_id in enumerate(items):
-                # Weight can be improved (e.g., number of ratings), but 1.0 matches the simple baseline
                 uploads[item_id] = (Q_u[t].detach().clone(), bi_u[t].detach().clone(), w)
 
         return uploads

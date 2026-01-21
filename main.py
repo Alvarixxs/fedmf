@@ -1,7 +1,7 @@
 import argparse
 
 from dataset.movielens import download_movielens_latest_small, load_and_preprocess
-from components.trainer import FederatedMFTrainer
+from components.trainer import Trainer
 
 
 def main():
@@ -35,7 +35,7 @@ def main():
     print(f"MovieLens: users={n_users}, items={n_items}, interactions={len(ratings_df)}")
 
     # Trainer (mu will be set after split)
-    trainer = FederatedMFTrainer(
+    trainer = Trainer(
         n_users=n_users,
         n_items=n_items,
         mu=0.0,

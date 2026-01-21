@@ -16,7 +16,7 @@ from components.server import Server, ServerConfig
 
 
 @dataclass
-class FederatedMFTrainer:
+class Trainer:
     # Problem sizes (mu can be set later after splitting)
     n_users: int
     n_items: int
