@@ -1,60 +1,81 @@
 from __future__ import annotations
-from dataclasses import dataclass
+import random
 from typing import Dict, List, Tuple
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-
-@dataclass
-class ClientConfig:
-    k: int
-    lr: float
-    local_epochs: int
-    batch_size: int
-    reg: float  # L2 regularization strength
+from configs.clientConfig import ClientConfig
 
 
 class Client:
     """
-    One client = one user.
-    Keeps local user parameters (p_u, b_u) across rounds.
-    Trains on its own ratings and returns updates for touched items (q_i, b_i).
     """
 
-    def __init__(self, user_id: int, config: ClientConfig, device: torch.device):
+    def __init__(
+        self,
+        user_id: int,
+        cfg: ClientConfig,
+        device: torch.device,
+        user_data: List[Tuple[int, float]],
+        test_frac: float,
+    ) -> None:
+        """
+        """
         self.user_id = user_id
-        self.cfg = config
+        self.cfg = cfg
         self.device = device
 
         # Local user parameters (persist)
         self.p_u = (0.01 * torch.randn(self.cfg.k, device=self.device))
         self.b_u = torch.tensor(0.0, device=self.device)
 
+        self.train_data, self.test_data = self._split_data(user_data, test_frac)
+
+    # -----------------------------
+    # Data handling (client-owned)
+    # -----------------------------
+    def _split_data(
+        self,
+        user_data: List[Tuple[int, float]],
+        test_frac: float,
+    ) -> Tuple[List[Tuple[int, float]], List[Tuple[int, float]]]:
+        """
+        """
+        random.shuffle(user_data)
+        n = len(user_data)
+
+        if n <= 1:
+            train = user_data
+            test = []
+
+        n_test = max(1, int(test_frac * n))
+        test = user_data[:n_test]
+        train = user_data[n_test:]
+
+        return train, test
+    
+    def compute_sum(self) -> Tuple[float, int]:
+        """
+        """
+        return sum(r for (_, r) in self.train_data), len(self.train_data)
+
+    # -----------------------------
+    # Local training (uses ONLY train split)
+    # -----------------------------
     def local_train(
         self,
-        user_train_data: List[Tuple[int, float]],
         mu: float,
         Q_items: torch.Tensor,
         bi_items: torch.Tensor,
     ) -> Dict[int, Tuple[torch.Tensor, torch.Tensor, float]]:
+        """ 
         """
-        Parameters
-        ----------
-        user_train_data: list of (global_item_id, rating)
-        mu: global mean rating
-        Q_items: server's full Q [n_items, k]
-        bi_items: server's full bi [n_items]
-
-        Returns
-        -------
-        uploads: dict global_item_id -> (q_i_new, b_i_new, weight)
-        """
-        if len(user_train_data) == 0:
+        if len(self.train_data) == 0:
             return {}
 
         # Items this client touched
-        items = sorted(set(i for (i, _) in user_train_data))
+        items = sorted(set(i for (i, _) in self.train_data))
         item_pos = {item_id: t for t, item_id in enumerate(items)}
 
         # Local copies of touched item params
@@ -66,9 +87,9 @@ class Client:
         b_u = self.b_u.clone().detach().requires_grad_(True)
 
         # Build local dataset
-        ii = torch.tensor([item_pos[i] for (i, _) in user_train_data],
+        ii = torch.tensor([item_pos[i] for (i, _) in self.train_data],
                           device=self.device, dtype=torch.long)
-        rr = torch.tensor([r for (_, r) in user_train_data],
+        rr = torch.tensor([r for (_, r) in self.train_data],
                           device=self.device, dtype=torch.float32)
 
         loader = DataLoader(
@@ -109,7 +130,7 @@ class Client:
         self.b_u = b_u.detach()
 
         # Count how many ratings per item for weighting
-        w = len(user_train_data)
+        w = len(self.train_data)
 
         # Upload updated item params for touched items
         uploads: Dict[int, Tuple[torch.Tensor, torch.Tensor, float]] = {}
@@ -119,11 +140,34 @@ class Client:
 
         return uploads
 
+    # -----------------------------
+    # Prediction / evaluation
+    # -----------------------------
     @torch.no_grad()
-    def predict_one(self, mu: float, bi: torch.Tensor, q_i: torch.Tensor) -> float:
+    def _predict_one(self, mu: float, bi: torch.Tensor, q_i: torch.Tensor) -> float:
         """
-        Predict rating for this user and one item given (bi_i, q_i).
         """
         mu_t = torch.tensor(mu, device=self.device, dtype=torch.float32)
         pred = mu_t + self.b_u + bi + torch.dot(self.p_u, q_i)
+
         return float(pred)
+
+    @torch.no_grad()
+    def sum_squared_error(self, split: str, mu: float, Q_items: torch.Tensor, bi_items: torch.Tensor) -> Tuple[float, int]:
+        """
+        """
+        if split == "train":
+            data = self.train_data
+        elif split == "test":
+            data = self.test_data
+        else:
+            raise ValueError(f"split must be one of: train/test, got {split}")
+        if not data:
+            return float("nan"), 0
+
+        se = 0.0
+        for (i, r) in data:
+            pred = self._predict_one(mu=mu, bi=bi_items[i], q_i=Q_items[i])
+            se += (pred - r) ** 2
+
+        return se, len(data)

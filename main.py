@@ -1,7 +1,13 @@
 import argparse
 
+import torch
+
+from configs.serverConfig import ServerConfig
 from dataset.movielens import download_movielens_latest_small, load_and_preprocess
-from components.trainer import Trainer
+from components.client import Client
+from components.server import Server
+from configs.clientConfig import ClientConfig
+from utils.utils import plot_history, split_per_user, set_seed
 
 
 def main():
@@ -18,54 +24,52 @@ def main():
     ap.add_argument("--lr", type=float, default=0.05)
     ap.add_argument("--reg", type=float, default=1e-3)
 
-    ap.add_argument(
-        "--no_weight_by_client_data",
-        action="store_true",
-        help="Disable weighting uploads by |D_u| (client data size).",
-    )
-
     ap.add_argument("--no_plot", action="store_true", help="Disable plotting RMSE curves.")
-    ap.add_argument("--log_every", type=int, default=5, help="Print metrics every N rounds (0 disables periodic logs).")
 
     args = ap.parse_args()
+    set_seed(args.seed)
 
     # Data
     ratings_csv = download_movielens_latest_small(data_dir="data")
     ratings_df, n_users, n_items = load_and_preprocess(ratings_csv)
     print(f"MovieLens: users={n_users}, items={n_items}, interactions={len(ratings_df)}")
 
-    # Trainer (mu will be set after split)
-    trainer = Trainer(
-        n_users=n_users,
-        n_items=n_items,
-        mu=0.0,
-        k=args.k,
-        rounds=args.rounds,
-        client_fraction=args.client_fraction,
-        local_epochs=args.local_epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        reg=args.reg,
-        seed=args.seed,
-        weight_by_client_data=not args.no_weight_by_client_data,
-    )
+    by_user = split_per_user(ratings_df)
 
-    # Split using the trainer's method (and set trainer.mu from TRAIN only)
-    train_by_user, test_by_user, mu = trainer.prepare_data_split(
-        ratings_df,
-        test_frac=args.test_frac,
-        seed=args.seed,
-        set_mu=True,
-    )
-    print(f"Train-only global mean mu = {mu:.4f}")
+    clients = [
+        Client(
+            user_id=u, 
+            cfg=ClientConfig(
+                k=args.k, 
+                lr=args.lr, 
+                local_epochs=args.local_epochs, 
+                batch_size=args.batch_size, 
+                reg=args.reg
+                ), 
+            device=torch.device("cpu"),
+            user_data=by_user.get(u, []),
+            test_frac=args.test_frac,
+            ) 
+        for u in range(n_users)
+        ]
+    print(f"Created {len(clients)} clients.")
 
-    # Train
-    trainer.train(
-        train_by_user=train_by_user,
-        test_by_user=test_by_user,
-        plot=not args.no_plot,
-        log_every=args.log_every,
+    server = Server(
+        cfg=ServerConfig(
+            n_items=n_items,
+            k=args.k,
+            client_frac=args.client_fraction,
+            rounds=args.rounds,
+        ),
+        device=torch.device("cpu"),
+        clients=clients
     )
+    print("Server initialized.")
+
+    history = server.train()
+
+    if not args.no_plot:
+        plot_history(history)
 
 
 if __name__ == "__main__":
