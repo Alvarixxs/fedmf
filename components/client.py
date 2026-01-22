@@ -130,7 +130,7 @@ class Client:
         self.b_u = b_u.detach()
 
         # Count how many ratings per item for weighting
-        w = len(self.train_data)
+        w = len(self.train_data) if self.cfg.weight_by_client_data else 1.0
 
         # Upload updated item params for touched items
         uploads: Dict[int, Tuple[torch.Tensor, torch.Tensor, float]] = {}

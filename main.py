@@ -23,6 +23,11 @@ def main():
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--lr", type=float, default=0.05)
     ap.add_argument("--reg", type=float, default=1e-3)
+    ap.add_argument(
+        "--weight_by_client_data",
+        action="store_true",
+        help="Enable weighting uploads by |D_u| (client data size).",
+    )
 
     ap.add_argument("--no_plot", action="store_true", help="Disable plotting RMSE curves.")
 
@@ -44,7 +49,8 @@ def main():
                 lr=args.lr, 
                 local_epochs=args.local_epochs, 
                 batch_size=args.batch_size, 
-                reg=args.reg
+                reg=args.reg,
+                weight_by_client_data=args.weight_by_client_data,
                 ), 
             device=torch.device("cpu"),
             user_data=by_user.get(u, []),
