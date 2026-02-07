@@ -5,13 +5,10 @@ from typing import Dict, List, Tuple
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from opacus.accountants import RDPAccountant
-
 from configs.clientConfig import ClientConfig
-from configs.dpConfig import DPConfig
-from utils.utils import clip_l2, add_gaussian_noise
 
-class Client:
+
+class fedClient:
     """
     """
 
@@ -22,14 +19,12 @@ class Client:
         device: torch.device,
         user_data: List[Tuple[int, float]],
         test_frac: float,
-        dp_cfg: DPConfig,
     ) -> None:
         """
         """
         self.user_id = user_id
         self.cfg = cfg
         self.device = device
-        self.dp_cfg = dp_cfg
 
         self.train_data, self.test_data = self._split_data(user_data, test_frac)
 
@@ -59,7 +54,7 @@ class Client:
 
         return train, test
     
-    def compute_sum(self) -> Tuple[float, int]:
+    def compute_sum_train(self) -> Tuple[float, int]:
         """
         """
         return sum(r for (_, r) in self.train_data), len(self.train_data)
@@ -139,13 +134,6 @@ class Client:
             delta_Q = (Q_u.detach() - base_Q)          # [m, k]
             delta_bi = (bi_u.detach() - base_bi)       # [m]
 
-        flat = torch.cat([delta_Q.reshape(-1), delta_bi.reshape(-1)], dim=0)
-        flat = clip_l2(flat, self.dp_cfg.clip_norm)
-
-        m = delta_Q.numel()
-        delta_Q = flat[:m].reshape_as(delta_Q)
-        delta_bi = flat[m:].reshape_as(delta_bi)
-
         # Upload updated item params for touched items
         uploads: Dict[int, Tuple[torch.Tensor, torch.Tensor]] = {}
         with torch.no_grad():
@@ -174,14 +162,10 @@ class Client:
             data = self.train_data
         elif split == "test":
             data = self.test_data
-        else:
-            raise ValueError(f"split must be one of: train/test, got {split}")
-        if not data:
-            return float("nan"), 0
 
         se = 0.0
         for (i, r) in data:
-            pred = self._predict_one(mu=mu, bi=bi_items[i], q_i=Q_items[i])
+            pred = self._predict_one(mu, bi_items[i], Q_items[i])
             se += (pred - r) ** 2
 
         return se, len(data)

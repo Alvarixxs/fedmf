@@ -2,31 +2,24 @@ from __future__ import annotations
 import math
 import random
 from typing import Dict, List, Tuple
-from collections import defaultdict
 
 import torch
 
-from opacus.accountants import RDPAccountant
-
-from components.client import Client
+from components.fed_client import fedClient
 from configs.dpConfig import DPConfig
 from configs.serverConfig import ServerConfig
 from utils.utils import add_gaussian_noise
 
 
-class Server:
+class fedServer:
     """
     """
 
-    def __init__(self, cfg: ServerConfig, device: torch.device, dp_cfg: DPConfig, clients: List[Client]) -> None:
+    def __init__(self, cfg: ServerConfig, device: torch.device, clients: List[fedClient]) -> None:
         """
         """
         self.cfg = cfg
         self.device = device
-        self.dp_cfg = dp_cfg
-
-        self._accountant = RDPAccountant()
-
         self.clients = clients
 
         self.Q = (0.01 * torch.randn(self.cfg.n_items, self.cfg.k, device=self.device))
@@ -40,7 +33,7 @@ class Server:
         total_cnt = 0
 
         for client in self.clients:
-            sm, cnt = client.compute_sum()
+            sm, cnt = client.compute_sum_train()
             total_sm += sm
             total_cnt += cnt
 
@@ -49,7 +42,7 @@ class Server:
     # -----------------------------
     # Federated training
     # -----------------------------
-    def _sample_clients(self) -> List[Client]:
+    def _sample_clients(self) -> List[fedClient]:
         selected = [c for c in self.clients if random.random() < self.cfg.sample_rate]
         return selected
 
@@ -76,19 +69,9 @@ class Server:
         dQ_avg = dQ_sum / m
         db_avg = db_sum / m
 
-        sens = self.dp_cfg.clip_norm / m
-
-        dQ_avg = add_gaussian_noise(dQ_avg, self.dp_cfg.noise_multiplier, sens)
-        db_avg = add_gaussian_noise(db_avg, self.dp_cfg.noise_multiplier, sens)
-
         with torch.no_grad():
             self.Q += dQ_avg
             self.bi += db_avg
-
-        self._accountant.step(
-            noise_multiplier=self.dp_cfg.noise_multiplier,
-            sample_rate=self.cfg.sample_rate,
-        )
 
     def train(self) -> List[Tuple[int, float, float]]:
         """
@@ -111,25 +94,13 @@ class Server:
 
             train_rmse = self.rmse(split="train")
             test_rmse = self.rmse(split="test")
-            eps = self.privacy_report()
-            history.append((rnd, train_rmse, test_rmse, eps))
+            history.append((rnd, train_rmse, test_rmse))
 
-            analysis = f"Round {rnd:3d}: train RMSE = {train_rmse:.4f}, test RMSE = {test_rmse:.4f}, ε = {eps:.2f}"
+            analysis = f"Round {rnd:3d}: train RMSE = {train_rmse:.4f}, test RMSE = {test_rmse:.4f}"
 
             print(analysis)
 
         return history
-    
-    # -----------------------------
-    # Privacy reporting (local DP)
-    # -----------------------------
-    def privacy_report(self) -> float:
-        """
-        """        
-        eps, _ = self._accountant.get_privacy_spent(
-            delta=self.dp_cfg.delta,
-        )
-        return eps
         
     # -----------------------------
     # Evaluation
