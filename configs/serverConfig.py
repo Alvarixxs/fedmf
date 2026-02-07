@@ -5,5 +5,5 @@ from dataclasses import dataclass
 class ServerConfig:
     n_items: int
     k: int
-    client_frac: float
+    sample_rate: float
     rounds: int

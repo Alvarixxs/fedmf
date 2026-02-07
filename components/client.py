@@ -5,8 +5,11 @@ from typing import Dict, List, Tuple
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from configs.clientConfig import ClientConfig
+from opacus.accountants import RDPAccountant
 
+from configs.clientConfig import ClientConfig
+from configs.dpConfig import DPConfig
+from utils.utils import clip_l2, add_gaussian_noise
 
 class Client:
     """
@@ -19,18 +22,24 @@ class Client:
         device: torch.device,
         user_data: List[Tuple[int, float]],
         test_frac: float,
+        dp_cfg: DPConfig,
     ) -> None:
         """
         """
         self.user_id = user_id
         self.cfg = cfg
         self.device = device
+        self.dp_cfg = dp_cfg
+
+        if self.dp_cfg.mode == "local":
+            self.dp_cfg = dp_cfg
+            self._accountant = RDPAccountant()
+
+        self.train_data, self.test_data = self._split_data(user_data, test_frac)
 
         # Local user parameters (persist)
         self.p_u = (0.01 * torch.randn(self.cfg.k, device=self.device))
         self.b_u = torch.tensor(0.0, device=self.device)
-
-        self.train_data, self.test_data = self._split_data(user_data, test_frac)
 
     # -----------------------------
     # Data handling (client-owned)
@@ -46,8 +55,7 @@ class Client:
         n = len(user_data)
 
         if n <= 1:
-            train = user_data
-            test = []
+            return user_data, []
 
         n_test = max(1, int(test_frac * n))
         test = user_data[:n_test]
@@ -60,6 +68,10 @@ class Client:
         """
         return sum(r for (_, r) in self.train_data), len(self.train_data)
 
+    def get_epsilon(self) -> float:
+        """Return ε spent so far for given δ (local DP, per-client)."""
+        return float(self._accountant.get_epsilon(self.dp_cfg.delta))
+
     # -----------------------------
     # Local training (uses ONLY train split)
     # -----------------------------
@@ -68,7 +80,7 @@ class Client:
         mu: float,
         Q_items: torch.Tensor,
         bi_items: torch.Tensor,
-    ) -> Dict[int, Tuple[torch.Tensor, torch.Tensor, float]]:
+    ) -> Dict[int, Tuple[torch.Tensor, torch.Tensor]]:
         """ 
         """
         if len(self.train_data) == 0:
@@ -129,14 +141,29 @@ class Client:
         self.p_u = p_u.detach()
         self.b_u = b_u.detach()
 
-        # Count how many ratings per item for weighting
-        w = len(self.train_data) if self.cfg.weight_by_client_data else 1.0
+        with torch.no_grad():
+            base_Q = Q_items[items]
+            base_bi = bi_items[items]
+            delta_Q = (Q_u.detach() - base_Q)          # [m, k]
+            delta_bi = (bi_u.detach() - base_bi)       # [m]
+
+        if self.dp_cfg.mode in ["local", "central", "none"]:
+            flat = torch.cat([delta_Q.reshape(-1), delta_bi.reshape(-1)], dim=0)
+            flat = clip_l2(flat, self.dp_cfg.clip_norm)
+
+            if self.dp_cfg.mode == "local":
+                flat = add_gaussian_noise(flat, self.dp_cfg.noise_multiplier, self.dp_cfg.clip_norm)
+                self._accountant.step(noise_multiplier=self.dp_cfg.noise_multiplier, sample_rate=1.0)
+
+            m = delta_Q.numel()
+            delta_Q = flat[:m].reshape_as(delta_Q)
+            delta_bi = flat[m:].reshape_as(delta_bi)
 
         # Upload updated item params for touched items
-        uploads: Dict[int, Tuple[torch.Tensor, torch.Tensor, float]] = {}
+        uploads: Dict[int, Tuple[torch.Tensor, torch.Tensor]] = {}
         with torch.no_grad():
             for t, item_id in enumerate(items):
-                uploads[item_id] = (Q_u[t].detach().clone(), bi_u[t].detach().clone(), w)
+                uploads[item_id] = (delta_Q[t].detach().clone(), delta_bi[t].detach().clone())
 
         return uploads
 

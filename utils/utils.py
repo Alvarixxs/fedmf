@@ -43,3 +43,27 @@ def plot_history(history: List[Tuple[int, float, float]]) -> None:
     plt.legend()
     plt.tight_layout()
     plt.show()
+
+
+def clip_l2(
+    x: torch.Tensor,
+    clip_norm: float,
+    eps: float = 1e-12,
+) -> torch.Tensor:
+    """
+    """
+    l2 = torch.linalg.vector_norm(x.reshape(-1), ord=2)
+    scale = min(1.0, (clip_norm / (l2 + eps)).item())
+    return x * scale
+
+
+def add_gaussian_noise(
+    x: torch.Tensor,
+    noise_multiplier: float,
+    clip_norm: float,
+) -> torch.Tensor:
+    """
+    """
+    noise_std = noise_multiplier * clip_norm
+    noise = torch.randn_like(x) * noise_std
+    return x + noise

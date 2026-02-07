@@ -2,6 +2,7 @@ import argparse
 
 import torch
 
+from configs.dpConfig import DPConfig
 from configs.serverConfig import ServerConfig
 from dataset.movielens import download_movielens_latest_small, load_and_preprocess
 from components.client import Client
@@ -18,16 +19,16 @@ def main():
 
     ap.add_argument("--k", type=int, default=32)
     ap.add_argument("--rounds", type=int, default=30)
-    ap.add_argument("--client_fraction", type=float, default=0.2)
+    ap.add_argument("--sample_rate", type=float, default=0.3)
     ap.add_argument("--local_epochs", type=int, default=4)
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--lr", type=float, default=0.05)
     ap.add_argument("--reg", type=float, default=1e-3)
-    ap.add_argument(
-        "--weight_by_client_data",
-        action="store_true",
-        help="Enable weighting uploads by |D_u| (client data size).",
-    )
+
+    ap.add_argument("--mode", type=str, default="local", choices=["none", "local", "central"])
+    ap.add_argument("--clip_norm", type=float, default=1.0)
+    ap.add_argument("--noise_multiplier", type=float, default=1.0)
+    ap.add_argument("--delta", type=float, default=1e-6)
 
     ap.add_argument("--no_plot", action="store_true", help="Disable plotting RMSE curves.")
 
@@ -41,6 +42,13 @@ def main():
 
     by_user = split_per_user(ratings_df)
 
+    dp_cfg=DPConfig(
+        mode=args.mode,
+        clip_norm=args.clip_norm,
+        noise_multiplier=args.noise_multiplier,
+        delta=args.delta,
+    )
+
     clients = [
         Client(
             user_id=u, 
@@ -50,12 +58,12 @@ def main():
                 local_epochs=args.local_epochs, 
                 batch_size=args.batch_size, 
                 reg=args.reg,
-                weight_by_client_data=args.weight_by_client_data,
-                ), 
+            ), 
             device=torch.device("cpu"),
             user_data=by_user.get(u, []),
             test_frac=args.test_frac,
-            ) 
+            dp_cfg=dp_cfg,
+            )
         for u in range(n_users)
         ]
     print(f"Created {len(clients)} clients.")
@@ -64,11 +72,12 @@ def main():
         cfg=ServerConfig(
             n_items=n_items,
             k=args.k,
-            client_frac=args.client_fraction,
+            sample_rate=args.sample_rate,
             rounds=args.rounds,
         ),
         device=torch.device("cpu"),
-        clients=clients
+        dp_cfg=dp_cfg,
+        clients=clients,
     )
     print("Server initialized.")
 
