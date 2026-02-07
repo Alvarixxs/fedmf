@@ -2,8 +2,10 @@ import argparse
 
 import torch
 
+from components.basic import MatrixFactorization
 from components.fed_client import fedClient
 from components.fed_server import fedServer
+from configs.basicConfig import BasicConfig
 from configs.dpConfig import DPConfig
 from configs.serverConfig import ServerConfig
 from dataset.movielens import download_movielens_latest_small, load_and_preprocess
@@ -20,7 +22,7 @@ def main():
     ap.add_argument("--test_frac", type=float, default=0.2)
 
     # Model settings
-    ap.add_argument("--model", type=str, default="FedDP_MF", choices=["MF", "Fed_MF", "FedDP_MF"])
+    ap.add_argument("--model", type=str, default="Fed_MF", choices=["MF", "Fed_MF", "FedDP_MF"])
 
     # MF settings
     ap.add_argument("--k", type=int, default=32)
@@ -53,8 +55,23 @@ def main():
 
     # Model and training setup
     if args.model == "MF":
+        basic_cfg = BasicConfig(
+            n_users=n_users,
+            n_items=n_items,
+            k=args.k,
+            epochs=args.local_epochs * args.rounds,  # Train for total number of local epochs across all rounds
+            lr=args.lr,
+            batch_size=args.batch_size,
+            reg=args.reg,
+        )
+
+        server = MatrixFactorization(
+            cfg=basic_cfg,
+            device=torch.device("cpu"),
+            data = list(ratings_df[['u', 'i', 'rating']].itertuples(index=False, name=None)),
+            test_frac=args.test_frac,
+        )
         print("Training non-federated MF...")
-        # Create a single client with all data for non-federated baseline
 
     elif args.model in ["Fed_MF", "FedDP_MF"]:
         by_user = split_per_user(ratings_df)

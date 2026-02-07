@@ -6,9 +6,7 @@ from typing import Dict, List, Tuple
 import torch
 
 from components.fed_client import fedClient
-from configs.dpConfig import DPConfig
 from configs.serverConfig import ServerConfig
-from utils.utils import add_gaussian_noise
 
 
 class fedServer:
@@ -96,9 +94,7 @@ class fedServer:
             test_rmse = self.rmse(split="test")
             history.append((rnd, train_rmse, test_rmse))
 
-            analysis = f"Round {rnd:3d}: train RMSE = {train_rmse:.4f}, test RMSE = {test_rmse:.4f}"
-
-            print(analysis)
+            print(f"Round {rnd:3d}: train RMSE = {train_rmse:.4f}, test RMSE = {test_rmse:.4f}")
 
         return history
         

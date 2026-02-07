@@ -2,7 +2,6 @@ from __future__ import annotations
 import math
 import random
 from typing import Dict, List, Tuple
-from collections import defaultdict
 
 import torch
 

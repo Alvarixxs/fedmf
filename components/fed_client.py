@@ -158,10 +158,7 @@ class fedClient:
     def sum_squared_error(self, split: str, mu: float, Q_items: torch.Tensor, bi_items: torch.Tensor) -> Tuple[float, int]:
         """
         """
-        if split == "train":
-            data = self.train_data
-        elif split == "test":
-            data = self.test_data
+        data = self.train_data if split == "train" else self.test_data
 
         se = 0.0
         for (i, r) in data:
