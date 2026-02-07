@@ -25,7 +25,6 @@ def main():
     ap.add_argument("--lr", type=float, default=0.05)
     ap.add_argument("--reg", type=float, default=1e-3)
 
-    ap.add_argument("--mode", type=str, default="local", choices=["none", "local", "central"])
     ap.add_argument("--clip_norm", type=float, default=1.0)
     ap.add_argument("--noise_multiplier", type=float, default=1.0)
     ap.add_argument("--delta", type=float, default=1e-6)
@@ -43,7 +42,6 @@ def main():
     by_user = split_per_user(ratings_df)
 
     dp_cfg=DPConfig(
-        mode=args.mode,
         clip_norm=args.clip_norm,
         noise_multiplier=args.noise_multiplier,
         delta=args.delta,

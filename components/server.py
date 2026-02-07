@@ -25,8 +25,7 @@ class Server:
         self.device = device
         self.dp_cfg = dp_cfg
 
-        if self.dp_cfg.mode == "central":
-            self._accountant = RDPAccountant()
+        self._accountant = RDPAccountant()
 
         self.clients = clients
 
@@ -59,12 +58,6 @@ class Server:
         updates_list: List[Dict[int, Tuple[torch.Tensor, torch.Tensor]]],
     ) -> None:
         """
-        Correct central DP (Gaussian mechanism on ONE fixed-dimensional aggregate per round):
-        1) Each client upload is already clipped on the client to L2 <= C (your client code does this).
-        2) Server forms a dense aggregate update over ALL parameters (Q, bi).
-        3) Server averages over m selected clients.
-        4) If central DP: add Gaussian noise once to the dense average with std = sigma * C / m.
-        5) Apply update, then step accountant once.
         """
         m = len(updates_list)
         if m == 0:
@@ -83,25 +76,19 @@ class Server:
         dQ_avg = dQ_sum / m
         db_avg = db_sum / m
 
-        if self.dp_cfg.mode == "central":
-            # Sensitivity of the average is C/m because each client's *full upload vector*
-            # is clipped to L2 <= C on the client, and embedding it into dense tensors
-            # does not increase its L2 norm.
-            sens = self.dp_cfg.clip_norm / m
+        sens = self.dp_cfg.clip_norm / m
 
-            dQ_avg = add_gaussian_noise(dQ_avg, self.dp_cfg.noise_multiplier, sens)
-            db_avg = add_gaussian_noise(db_avg, self.dp_cfg.noise_multiplier, sens)
+        dQ_avg = add_gaussian_noise(dQ_avg, self.dp_cfg.noise_multiplier, sens)
+        db_avg = add_gaussian_noise(db_avg, self.dp_cfg.noise_multiplier, sens)
 
         with torch.no_grad():
             self.Q += dQ_avg
             self.bi += db_avg
 
-        if self.dp_cfg.mode == "central":
-            self._accountant.step(
-                noise_multiplier=self.dp_cfg.noise_multiplier,
-                sample_rate=self.cfg.sample_rate,
-            )
-
+        self._accountant.step(
+            noise_multiplier=self.dp_cfg.noise_multiplier,
+            sample_rate=self.cfg.sample_rate,
+        )
 
     def train(self) -> List[Tuple[int, float, float]]:
         """
@@ -124,39 +111,26 @@ class Server:
 
             train_rmse = self.rmse(split="train")
             test_rmse = self.rmse(split="test")
-            history.append((rnd, train_rmse, test_rmse))
+            eps = self.privacy_report()
+            history.append((rnd, train_rmse, test_rmse, eps))
 
-            analysis = f"Round {rnd:3d}: train RMSE = {train_rmse:.4f}, test RMSE = {test_rmse:.4f}, dp mode = {self.dp_cfg.mode}"
-            if self.dp_cfg.mode in ["local", "central"]:
-                eps = self.privacy_report()
-                analysis += f", ε = {eps:.2f}"
+            analysis = f"Round {rnd:3d}: train RMSE = {train_rmse:.4f}, test RMSE = {test_rmse:.4f}, ε = {eps:.2f}"
 
             print(analysis)
 
         return history
     
-        # -----------------------------
+    # -----------------------------
     # Privacy reporting (local DP)
     # -----------------------------
     def privacy_report(self) -> float:
         """
         """        
-        if self.dp_cfg.mode == "central":
-            eps, _ = self._accountant.get_privacy_spent(
-                delta=self.dp_cfg.delta,
-            )
-            return eps
+        eps, _ = self._accountant.get_privacy_spent(
+            delta=self.dp_cfg.delta,
+        )
+        return eps
         
-        elif self.dp_cfg.mode == "local":
-            epsilons = []
-            for c in self.clients:
-                eps = c.get_epsilon()
-                epsilons.append(eps)
-
-            return max(epsilons)
-        
-        return float("inf")
-
     # -----------------------------
     # Evaluation
     # -----------------------------

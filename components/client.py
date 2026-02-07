@@ -31,10 +31,6 @@ class Client:
         self.device = device
         self.dp_cfg = dp_cfg
 
-        if self.dp_cfg.mode == "local":
-            self.dp_cfg = dp_cfg
-            self._accountant = RDPAccountant()
-
         self.train_data, self.test_data = self._split_data(user_data, test_frac)
 
         # Local user parameters (persist)
@@ -67,10 +63,6 @@ class Client:
         """
         """
         return sum(r for (_, r) in self.train_data), len(self.train_data)
-
-    def get_epsilon(self) -> float:
-        """Return ε spent so far for given δ (local DP, per-client)."""
-        return float(self._accountant.get_epsilon(self.dp_cfg.delta))
 
     # -----------------------------
     # Local training (uses ONLY train split)
@@ -147,17 +139,12 @@ class Client:
             delta_Q = (Q_u.detach() - base_Q)          # [m, k]
             delta_bi = (bi_u.detach() - base_bi)       # [m]
 
-        if self.dp_cfg.mode in ["local", "central", "none"]:
-            flat = torch.cat([delta_Q.reshape(-1), delta_bi.reshape(-1)], dim=0)
-            flat = clip_l2(flat, self.dp_cfg.clip_norm)
+        flat = torch.cat([delta_Q.reshape(-1), delta_bi.reshape(-1)], dim=0)
+        flat = clip_l2(flat, self.dp_cfg.clip_norm)
 
-            if self.dp_cfg.mode == "local":
-                flat = add_gaussian_noise(flat, self.dp_cfg.noise_multiplier, self.dp_cfg.clip_norm)
-                self._accountant.step(noise_multiplier=self.dp_cfg.noise_multiplier, sample_rate=1.0)
-
-            m = delta_Q.numel()
-            delta_Q = flat[:m].reshape_as(delta_Q)
-            delta_bi = flat[m:].reshape_as(delta_bi)
+        m = delta_Q.numel()
+        delta_Q = flat[:m].reshape_as(delta_Q)
+        delta_bi = flat[m:].reshape_as(delta_bi)
 
         # Upload updated item params for touched items
         uploads: Dict[int, Tuple[torch.Tensor, torch.Tensor]] = {}
